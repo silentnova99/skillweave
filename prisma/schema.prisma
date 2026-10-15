@@ -1,0 +1,864 @@
+// SkillWeave curriculum database schema (Prisma 7 / PostgreSQL)
+// Design: users, career paths, phases, modules, chapters, objectives,
+// prerequisites (explicit DAG), resources with curation roles + verification,
+// questions/assessments/attempts, progress, projects, skill profile,
+// recommendations, reports and admin audit log.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum Role {
+  LEARNER
+  ADMIN
+}
+
+enum SkillLevel {
+  ABSOLUTE_BEGINNER
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+}
+
+enum ResourceType {
+  OFFICIAL_DOCS
+  TEXTBOOK
+  UNIVERSITY_COURSE
+  VIDEO
+  TUTORIAL
+  OPEN_SOURCE
+  PRACTICE_EXERCISES
+  CODING_CHALLENGE
+  REFERENCE
+  ARTICLE
+}
+
+// Pedagogical role a resource plays inside one chapter.
+enum ResourceRole {
+  PRIMARY
+  ALTERNATIVE
+  EXAMPLE
+  EXERCISE
+  ADVANCED_REFERENCE
+  REVISION
+}
+
+enum ResourceStatus {
+  UNVERIFIED
+  VERIFIED
+  BROKEN
+  DEPRECATED
+}
+
+enum ChapterKind {
+  STANDARD
+  OPTIONAL
+  REVISION
+}
+
+enum QuestionType {
+  SINGLE_CHOICE
+  MULTIPLE_ANSWER
+  SHORT_ANSWER
+  CODING
+}
+
+enum AssessmentType {
+  DIAGNOSTIC
+  CHAPTER_QUIZ
+  MODULE_ASSESSMENT
+  REVISION
+  MOCK_EXAM
+  INTERVIEW_BANK
+}
+
+enum AttemptStatus {
+  IN_PROGRESS
+  SUBMITTED
+  GRADED
+  ABANDONED
+}
+
+enum ProgressStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum ProjectLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+}
+
+enum SubmissionStatus {
+  DRAFT
+  SUBMITTED
+  PASSED
+  NEEDS_WORK
+}
+
+// Shape of an uploaded artifact within a submission.
+enum SubmissionFileKind {
+  SOURCE
+  TEST
+  CONFIG
+  README
+  SCREENSHOT
+  OTHER
+}
+
+// Lifecycle of a review run.
+enum ReviewStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+// Categories a review reports on, kept separate so learners can see exactly
+// which dimension of their submission was judged and which could not run.
+enum CheckCategory {
+  STRUCTURE
+  COMPILE
+  TESTS
+  REQUIREMENTS
+  QUALITY
+  SECURITY
+  DOCUMENTATION
+}
+
+enum CheckStatus {
+  PASS
+  FAIL
+  WARN
+  SKIPPED
+}
+
+enum ReportKind {
+  BROKEN_LINK
+  INCORRECT_MAPPING
+  ACCESS_CHANGED
+  OTHER
+}
+
+enum ReportStatus {
+  OPEN
+  RESOLVED
+  DISMISSED
+}
+
+// ---------------------------------------------------------------------------
+// Authentication (Auth.js / NextAuth v5 + Prisma adapter)
+// ---------------------------------------------------------------------------
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  passwordHash  String?
+  role          Role      @default(LEARNER)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts Account[]
+  sessions Session[]
+
+  profile Profile?
+
+  chapterProgress     ChapterProgress[]
+  resourceCompletions ResourceCompletion[]
+  notes               Note[]
+  bookmarks           Bookmark[]
+  attempts            Attempt[]
+  skillScores         SkillScore[]
+  projectSubmissions  ProjectSubmission[] @relation("SubmissionAuthor")
+  reviewedProjects    ProjectSubmission[] @relation("SubmissionReviewer")
+  recommendations     Recommendation[]
+  reports             ResourceReport[]    @relation("ReportAuthor")
+  resolvedReports     ResourceReport[]    @relation("ReportResolver")
+  verifiedResources   Resource[]          @relation("ResourceVerifier")
+  auditLogs           AdminAuditLog[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ---------------------------------------------------------------------------
+// Learner profile & onboarding
+// ---------------------------------------------------------------------------
+
+model Profile {
+  id                 String     @id @default(cuid())
+  userId             String     @unique
+  targetCareerPathId String?
+  targetRole         String?
+  skillLevel         SkillLevel @default(ABSOLUTE_BEGINNER)
+  existingKnowledge  String?
+  experienceSummary  String?
+  weeklyHours        Int        @default(5)
+  targetWeeks        Int?
+  preferReading      Boolean    @default(true)
+  preferVideo        Boolean    @default(false)
+  preferPractice     Boolean    @default(true)
+  onboardingCompletedAt DateTime?
+  diagnosticCompletedAt DateTime?
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+
+  user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  careerPath   CareerPath? @relation(fields: [targetCareerPathId], references: [id], onDelete: SetNull)
+
+  @@index([targetCareerPathId])
+}
+
+// ---------------------------------------------------------------------------
+// Curriculum
+// ---------------------------------------------------------------------------
+
+// Top-level grouping for the career-path catalogue (the browse taxonomy).
+enum PathCategory {
+  SOFTWARE_ENGINEERING
+  DATA_AND_AI
+  CLOUD_AND_DEVOPS
+  CYBERSECURITY
+  PRODUCT_AND_DESIGN
+  FOUNDATIONS
+  OTHER
+}
+
+model CareerPath {
+  id             String   @id @default(cuid())
+  slug           String   @unique
+  title          String
+  summary        String
+  description    String
+  level          SkillLevel @default(ABSOLUTE_BEGINNER)
+  category       PathCategory @default(OTHER)
+  featured       Boolean  @default(false)
+  estimatedHours Int?
+  order          Int      @default(0)
+  published      Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  phases  Phase[]
+  roles   JobRole[]
+  projects Project[]
+  learners Profile[]
+
+  @@index([category])
+}
+
+model JobRole {
+  id           String @id @default(cuid())
+  careerPathId String
+  slug         String @unique
+  title        String
+  description  String
+  order        Int    @default(0)
+
+  careerPath CareerPath  @relation(fields: [careerPathId], references: [id], onDelete: Cascade)
+  skills     JobRoleSkill[]
+
+  @@index([careerPathId])
+}
+
+model JobRoleSkill {
+  id          String  @id @default(cuid())
+  jobRoleId   String
+  name        String
+  detail      String?
+  required    Boolean @default(true)
+  order       Int     @default(0)
+
+  jobRole JobRole @relation(fields: [jobRoleId], references: [id], onDelete: Cascade)
+
+  @@index([jobRoleId])
+}
+
+model Phase {
+  id             String   @id @default(cuid())
+  careerPathId   String
+  slug           String
+  title          String
+  summary        String
+  description    String
+  order          Int      @default(0)
+  estimatedHours Int?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  careerPath CareerPath @relation(fields: [careerPathId], references: [id], onDelete: Cascade)
+  modules    Module[]
+
+  @@unique([careerPathId, slug])
+  @@index([careerPathId])
+}
+
+model Module {
+  id               String   @id @default(cuid())
+  phaseId          String
+  slug             String
+  title            String
+  summary          String
+  description      String
+  order            Int      @default(0)
+  estimatedMinutes Int?
+  completionCriteria String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  phase        Phase                @relation(fields: [phaseId], references: [id], onDelete: Cascade)
+  chapters     Chapter[]
+  objectives   LearningObjective[]
+  prerequisites Prerequisite[]      @relation("ModuleRequires")
+  requiredBy    Prerequisite[]      @relation("ModuleRequiredBy")
+  assessments  Assessment[]
+
+  @@unique([phaseId, slug])
+  @@index([phaseId])
+}
+
+// Explicit prerequisite edge: `module` cannot start until `requiredModule` is complete.
+model Prerequisite {
+  id               String  @id @default(cuid())
+  moduleId         String
+  requiredModuleId String
+  note             String?
+
+  module         Module @relation("ModuleRequires", fields: [moduleId], references: [id], onDelete: Cascade)
+  requiredModule Module @relation("ModuleRequiredBy", fields: [requiredModuleId], references: [id], onDelete: Cascade)
+
+  @@unique([moduleId, requiredModuleId])
+  @@index([requiredModuleId])
+}
+
+model Chapter {
+  id                 String      @id @default(cuid())
+  moduleId           String
+  slug               String
+  title              String
+  summary            String
+  intro              String
+  order              Int         @default(0)
+  estimatedMinutes   Int?
+  kind               ChapterKind @default(STANDARD)
+  isOptional         Boolean     @default(false)
+  completionCriteria String?
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  module       Module              @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  objectives   LearningObjective[]
+  resources    ChapterResource[]
+  assessments  Assessment[]
+  questions    Question[]
+  progress     ChapterProgress[]
+  notes        Note[]
+  bookmarks    Bookmark[]
+  reports      ResourceReport[]
+
+  @@unique([moduleId, slug])
+  @@index([moduleId])
+}
+
+model LearningObjective {
+  id        String  @id @default(cuid())
+  moduleId  String?
+  chapterId String?
+  code      String?
+  text      String
+  order     Int     @default(0)
+
+  module  Module?  @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  chapter Chapter? @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  questions Question[]
+
+  @@index([moduleId])
+  @@index([chapterId])
+}
+
+// ---------------------------------------------------------------------------
+// Resources & curation
+// ---------------------------------------------------------------------------
+
+model Resource {
+  id               String         @id @default(cuid())
+  title            String
+  url              String         @unique
+  canonicalUrl     String?
+  publisher        String
+  author           String?
+  type             ResourceType
+  // For VIDEO resources: hosting provider and editorial video shape.
+  // videoKind is one of SINGLE | ONE_SHOT | PLAYLIST (null for non-video).
+  provider         String?
+  videoKind        String?
+  language         String         @default("en")
+  concepts         String[]       @default([])
+  difficulty       SkillLevel     @default(BEGINNER)
+  estimatedMinutes Int?
+  accessNotes      String?
+  isFree           Boolean        @default(true)
+  license          String?
+  licenseUrl       String?
+  isOpenLicense    Boolean        @default(false)
+  status           ResourceStatus @default(UNVERIFIED)
+  lastVerifiedAt   DateTime?
+  verificationNote String?
+  verifiedById     String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  verifiedBy    User?             @relation("ResourceVerifier", fields: [verifiedById], references: [id], onDelete: SetNull)
+  chapterLinks  ChapterResource[]
+  bookmarks     Bookmark[]
+  reports       ResourceReport[]
+
+  @@index([type])
+  @@index([status])
+}
+
+// Resource mapped to a chapter with an explicit pedagogical role.
+model ChapterResource {
+  id         String       @id @default(cuid())
+  chapterId  String
+  resourceId String
+  role       ResourceRole
+  order      Int          @default(0)
+  note       String?
+  isRequired Boolean      @default(false)
+  createdAt  DateTime     @default(now())
+
+  chapter  Chapter  @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  resource Resource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  completions ResourceCompletion[]
+
+  @@unique([chapterId, resourceId, role])
+  @@index([chapterId])
+  @@index([resourceId])
+}
+
+// ---------------------------------------------------------------------------
+// Assessments
+// ---------------------------------------------------------------------------
+
+model Assessment {
+  id               String         @id @default(cuid())
+  slug             String         @unique
+  title            String
+  description      String
+  type             AssessmentType
+  moduleId         String?
+  chapterId        String?
+  timeLimitMinutes Int?
+  passingScore     Int            @default(70)
+  skillTags        String[]       @default([])
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  module   Module?  @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  chapter  Chapter? @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  questions AssessmentQuestion[]
+  attempts  Attempt[]
+
+  @@index([moduleId])
+  @@index([chapterId])
+}
+
+model Question {
+  id                  String       @id @default(cuid())
+  prompt              String
+  explanation         String
+  type                QuestionType
+  difficulty          SkillLevel   @default(BEGINNER)
+  skillTags           String[]     @default([])
+  chapterId           String?
+  learningObjectiveId String?
+  points              Int          @default(1)
+  codeSnippet         String?
+  order               Int          @default(0)
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  chapter           Chapter?          @relation(fields: [chapterId], references: [id], onDelete: SetNull)
+  learningObjective LearningObjective? @relation(fields: [learningObjectiveId], references: [id], onDelete: SetNull)
+  options           QuestionOption[]
+  codingProblem     CodingProblem?
+  assessments       AssessmentQuestion[]
+  answers           Answer[]
+
+  @@index([chapterId])
+}
+
+model QuestionOption {
+  id         String  @id @default(cuid())
+  questionId String
+  text       String
+  isCorrect  Boolean @default(false)
+  rationale  String?
+  order      Int     @default(0)
+
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@index([questionId])
+}
+
+model CodingProblem {
+  id               String  @id @default(cuid())
+  questionId       String  @unique
+  language         String  @default("python")
+  starterCode      String
+  functionName     String?
+  // Array of { input: string, expectedOutput: string, hidden: boolean }
+  testCases        Json    @default("[]")
+  referenceSolution String?
+  timeLimitMs      Int     @default(4000)
+
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+}
+
+model AssessmentQuestion {
+  id           String @id @default(cuid())
+  assessmentId String
+  questionId   String
+  order        Int    @default(0)
+  points       Int?
+
+  assessment Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  question   Question   @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([assessmentId, questionId])
+  @@index([assessmentId])
+}
+
+model Attempt {
+  id               String        @id @default(cuid())
+  userId           String
+  assessmentId     String
+  status           AttemptStatus @default(IN_PROGRESS)
+  score            Int?
+  maxScore         Int?
+  percent          Int?
+  passed           Boolean?
+  timeSpentSeconds Int?
+  startedAt        DateTime      @default(now())
+  submittedAt      DateTime?
+  createdAt        DateTime      @default(now())
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assessment Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  answers    Answer[]
+
+  @@index([userId, assessmentId])
+}
+
+model Answer {
+  id            String   @id @default(cuid())
+  attemptId     String
+  questionId    String
+  // { selectedOptionIds?: string[], text?: string, code?: string }
+  response      Json
+  isCorrect     Boolean?
+  awardedPoints Int?
+  feedback      String?
+  createdAt     DateTime @default(now())
+
+  attempt  Attempt  @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([attemptId, questionId])
+  @@index([attemptId])
+}
+
+// ---------------------------------------------------------------------------
+// Progress, notes, bookmarks, skill profile
+// ---------------------------------------------------------------------------
+
+model ChapterProgress {
+  id          String         @id @default(cuid())
+  userId      String
+  chapterId   String
+  status      ProgressStatus @default(IN_PROGRESS)
+  source      String         @default("study") // "study" | "tested-out"
+  completedAt DateTime?
+  lastViewedAt DateTime      @default(now())
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chapter Chapter @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, chapterId])
+  @@index([chapterId])
+}
+
+model ResourceCompletion {
+  id                String   @id @default(cuid())
+  userId            String
+  chapterResourceId String
+  completedAt       DateTime @default(now())
+
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chapterResource ChapterResource @relation(fields: [chapterResourceId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, chapterResourceId])
+  @@index([chapterResourceId])
+}
+
+model Note {
+  id        String   @id @default(cuid())
+  userId    String
+  chapterId String
+  body      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chapter Chapter @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+
+  @@index([userId, chapterId])
+}
+
+model Bookmark {
+  id         String   @id @default(cuid())
+  userId     String
+  chapterId  String?
+  resourceId String?
+  label      String?
+  createdAt  DateTime @default(now())
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chapter  Chapter?  @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  resource Resource? @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model SkillScore {
+  id            String   @id @default(cuid())
+  userId        String
+  skill         String
+  score         Int      @default(0) // 0..100 mastery estimate
+  evidenceCount Int      @default(0)
+  updatedAt     DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, skill])
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Projects
+// ---------------------------------------------------------------------------
+
+model Project {
+  id                     String       @id @default(cuid())
+  careerPathId           String?
+  slug                   String       @unique
+  title                  String
+  level                  ProjectLevel
+  summary                String
+  description            String
+  prerequisitesText      String?
+  objectives             String[]     @default([])
+  requirements           String
+  milestones             Json         @default("[]")
+  starterResources       String[]     @default([])
+  acceptanceCriteria     String[]     @default([])
+  hints                  String[]     @default([])
+  submissionInstructions String
+  rubric                 Json         @default("[]")
+  extensions             String[]     @default([])
+  order                  Int          @default(0)
+  createdAt              DateTime     @default(now())
+  updatedAt              DateTime     @updatedAt
+
+  careerPath  CareerPath?         @relation(fields: [careerPathId], references: [id], onDelete: SetNull)
+  submissions ProjectSubmission[]
+
+  @@index([careerPathId])
+}
+
+model ProjectSubmission {
+  id           String           @id @default(cuid())
+  userId       String
+  projectId    String
+  status       SubmissionStatus @default(DRAFT)
+  repoUrl      String?
+  liveUrl      String?
+  notes        String?
+  selfAssessment Json           @default("{}")
+  // Uploaded-work summary (source | archive | repository).
+  kind         String?
+  language     String?
+  fileCount    Int              @default(0)
+  totalBytes   Int              @default(0)
+  reviewStatus ReviewStatus?
+  lastScore    Int?
+  reviewCount  Int              @default(0)
+  submittedAt  DateTime?
+  reviewedAt   DateTime?
+  reviewerId   String?
+  feedback     String?
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  user     User    @relation("SubmissionAuthor", fields: [userId], references: [id], onDelete: Cascade)
+  reviewer User?   @relation("SubmissionReviewer", fields: [reviewerId], references: [id], onDelete: SetNull)
+  project  Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  files    SubmissionFile[]
+  reviews  SubmissionReview[]
+
+  @@index([userId])
+  @@index([projectId])
+}
+
+// One stored file from an uploaded submission (never executed in-process).
+model SubmissionFile {
+  id           String             @id @default(cuid())
+  submissionId String
+  path         String
+  kind         SubmissionFileKind @default(OTHER)
+  language     String?
+  sizeBytes    Int
+  lines        Int?
+  sha256       String
+  storageKey   String?
+  excerpt      String?
+  createdAt    DateTime           @default(now())
+
+  submission ProjectSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@unique([submissionId, path])
+  @@index([submissionId])
+}
+
+// A single review run over a submission, with per-category, per-check results.
+model SubmissionReview {
+  id           String       @id @default(cuid())
+  submissionId String
+  runNumber    Int          @default(1)
+  trigger      String       @default("SUBMITTED")
+  status       ReviewStatus @default(COMPLETED)
+  score        Int?
+  summary      String
+  // Array of { id, category, label, status, detail, evidence?: string[] }
+  checks       Json         @default("[]")
+  environment  String?
+  nextActivity String?
+  durationMs   Int?
+  createdAt    DateTime     @default(now())
+
+  submission ProjectSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@index([submissionId])
+}
+
+
+// ---------------------------------------------------------------------------
+// Recommendations, reports, audit
+// ---------------------------------------------------------------------------
+
+model Recommendation {
+  id          String    @id @default(cuid())
+  userId      String
+  kind        String // NEXT_CHAPTER | REVISION | ASSESSMENT | PROJECT | INTERVIEW
+  title       String
+  rationale   String
+  targetType  String?
+  targetId    String?
+  priority    Int       @default(0)
+  dismissedAt DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model ResourceReport {
+  id           String       @id @default(cuid())
+  resourceId   String?
+  chapterId    String?
+  userId       String?
+  kind         ReportKind
+  message      String
+  status       ReportStatus @default(OPEN)
+  resolvedById String?
+  createdAt    DateTime     @default(now())
+  resolvedAt   DateTime?
+
+  resource   Resource? @relation(fields: [resourceId], references: [id], onDelete: SetNull)
+  chapter    Chapter?  @relation(fields: [chapterId], references: [id], onDelete: SetNull)
+  user       User?     @relation("ReportAuthor", fields: [userId], references: [id], onDelete: SetNull)
+  resolvedBy User?     @relation("ReportResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
+
+  @@index([status])
+}
+
+model AdminAuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  action     String
+  entityType String
+  entityId   String?
+  summary    String
+  diff       Json?
+  createdAt  DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}

@@ -1,26 +1,314 @@
 @import "tailwindcss";
 
+/* ---------------------------------------------------------------------------
+   SkillWeave design system — inspired by Codiant's AI-agency language:
+   white canvas, sharp-edged components, Inter typography, a red primary, a
+   signature purple -> magenta -> red gradient, teal + deep-navy accents, and
+   alternating light/dark sections with smooth, springy motion.
+   Tailwind v4 CSS-first theme.
+--------------------------------------------------------------------------- */
+@theme {
+  /* Canvas + neutrals */
+  --color-bg: #ffffff;
+  --color-surface: #f0f4f7;
+  --color-surface-2: #e9edf1;
+  --color-border: #e6e6e6;
+  --color-border-strong: #c4c4c4;
+
+  --color-fg: #14141c;
+  --color-fg-muted: #5c5c66;
+  --color-fg-subtle: #8b8b95;
+
+  /* Brand (primary red, Codiant-style) */
+  --color-brand: #eb3f43;
+  --color-brand-hover: #e82328;
+  --color-brand-soft: #fdecec;
+  --color-brand-bright: #ff5a5e;
+
+  /* Secondary accents */
+  --color-indigo: #473a92;
+  --color-magenta: #943a71;
+  --color-teal: #148a71;
+  --color-teal-soft: #e7f5f1;
+  --color-navy: #00103d;
+
+  /* Dark sections (Codiant ink) */
+  --color-ink: #14141c;
+  --color-ink-2: #1c1c21;
+  --color-ink-3: #2d2d37;
+  --color-ink-border: #2e2e38;
+  --color-on-ink: #ffffff;
+  --color-on-ink-muted: #a9a9b3;
+
+  /* Status */
+  --color-success: #148a71;
+  --color-success-soft: #e7f5f1;
+  --color-warning: #b45309;
+  --color-warning-soft: #fffbeb;
+  --color-danger: #b91c1c;
+  --color-danger-soft: #fdecec;
+
+  /* Signature gradient */
+  --gradient-brand: linear-gradient(135deg, #473a92 0%, #943a71 41%, #eb3f43 100%);
+  --gradient-brand-soft: linear-gradient(135deg, #f4f2fb 0%, #fbeef2 50%, #fdecec 100%);
+
+  /* Shape (Codiant is flat + sharp) */
+  --radius-card: 0px;
+  --radius-control: 0px;
+
+  /* Motion */
+  --ease-smooth: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-mono-code), ui-monospace, "SFMono-Regular", monospace;
+}
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: light;
+  scroll-padding-top: 5.5rem;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-brand) 22%, transparent);
+  color: var(--color-fg);
+}
+
+/* --------------------------------------------------------------------------
+   Editorial heading + layout treatments
+-------------------------------------------------------------------------- */
+@layer components {
+  .eyebrow {
+    font-size: 0.72rem;
+    line-height: 1rem;
+    font-weight: 700;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+  }
+
+  .display-title {
+    font-weight: 700;
+    letter-spacing: -0.021em;
+    line-height: 1.04;
+  }
+
+  .section-title {
+    font-weight: 700;
+    letter-spacing: -0.015em;
+    line-height: 1.12;
+  }
+
+  .gradient-text {
+    background: var(--gradient-brand);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .bg-brand-gradient {
+    background-image: var(--gradient-brand);
+  }
+
+  .bg-brand-gradient-soft {
+    background-image: var(--gradient-brand-soft);
+  }
+
+  /* Animated underline for inline links. */
+  .link-underline {
+    background-image: linear-gradient(currentColor, currentColor);
+    background-position: 0 100%;
+    background-repeat: no-repeat;
+    background-size: 0% 1px;
+    transition: background-size 0.35s var(--ease-smooth);
+  }
+  .link-underline:hover {
+    background-size: 100% 1px;
+  }
+
+  /* Native <details> accordion. */
+  .accordion-item > summary {
+    list-style: none;
+    cursor: pointer;
+  }
+  .accordion-item > summary::-webkit-details-marker {
+    display: none;
+  }
+  .accordion-item[open] .accordion-plus {
+    transform: rotate(45deg);
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Motion system
+-------------------------------------------------------------------------- */
+
+/* Scroll-reveal (driven by <Reveal>). */
+[data-reveal] {
+  opacity: 0;
+  transform: translateY(26px);
+  transition:
+    opacity 0.75s var(--ease-smooth),
+    transform 0.75s var(--ease-smooth);
+  transition-delay: var(--reveal-delay, 0ms);
+  will-change: opacity, transform;
+}
+[data-reveal="left"] {
+  transform: translateX(-32px);
+}
+[data-reveal="right"] {
+  transform: translateX(32px);
+}
+[data-reveal="scale"] {
+  transform: scale(0.94);
+}
+[data-reveal].is-visible {
+  opacity: 1;
+  transform: none;
+}
+
+/* Card lift on hover. */
+.card-lift {
+  transition:
+    transform 0.4s var(--ease-smooth),
+    box-shadow 0.4s var(--ease-smooth),
+    border-color 0.4s var(--ease-smooth);
+  will-change: transform;
+}
+.card-lift:hover {
+  transform: translateY(-6px);
+  box-shadow: 0 18px 40px -22px rgba(20, 20, 28, 0.4);
+}
+
+/* Button ripple. */
+@keyframes sw-ripple {
+  from {
+    transform: scale(0);
+    opacity: 0.45;
+  }
+  to {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+}
+.ripple-ink {
+  position: absolute;
+  border-radius: 9999px;
+  background: currentColor;
+  pointer-events: none;
+  transform: scale(0);
+  animation: sw-ripple 0.6s var(--ease-out) forwards;
+}
+
+/* Page transition (template.tsx). */
+@keyframes sw-page-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.animate-page-in {
+  animation: sw-page-in 0.5s var(--ease-smooth) both;
+}
+
+/* Infinite marquee (sources strip). */
+@keyframes sw-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+.animate-marquee {
+  animation: sw-marquee 34s linear infinite;
+}
+.marquee-mask {
+  mask-image: linear-gradient(to right, transparent, #000 8%, #000 92%, transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 8%, #000 92%, transparent);
+}
+
+/* Slow gradient drift for hero glows. */
+@keyframes sw-float {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, -16px, 0);
+  }
+}
+.animate-float {
+  animation: sw-float 7s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  [data-reveal] {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+  .animate-marquee,
+  .animate-float,
+  .animate-page-in {
+    animation: none;
+  }
+  .card-lift:hover {
+    transform: none;
+  }
+}
+
+/* Visible focus for keyboard users everywhere. */
+:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+
+/* Consistent scrollbar on long curriculum sidebars. */
+.thin-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
+}
+
+.container-page {
+  margin-inline: auto;
+  width: 100%;
+  max-width: 80rem;
+  padding-inline: 1rem;
+}
+
+@media (min-width: 640px) {
+  .container-page {
+    padding-inline: 1.5rem;
+  }
+}
+
+.sr-only-focusable:focus {
+  position: static;
+  width: auto;
+  height: auto;
+  padding: 0.5rem 1rem;
+  margin: 0;
+  overflow: visible;
+  clip: auto;
+  white-space: normal;
 }
